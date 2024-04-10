@@ -1,7 +1,7 @@
 module OpenAI.Chat exposing
     ( create
     , Input, ChatMessage, ChatMessageRole(..), Output, Choice
-    , FunctionDef, ParameterObject, Property, PropertyDetails, PropertyType(..), Tool(..), addParameter, makeFunction, requireParams
+    , PropertyType(..),  addParameter, makeFunction, requireParams
     )
 
 {-| <https://platform.openai.com/docs/api-reference/chat/create>
