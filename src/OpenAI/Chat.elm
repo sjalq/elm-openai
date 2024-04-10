@@ -1,6 +1,7 @@
 module OpenAI.Chat exposing
     ( create
-    , Input, ChatMessage, ChatMessageRole(..), ModelID(..), Output, Choice
+    , Input, ChatMessage, ChatMessageRole(..), Output, Choice
+    , FunctionDef, ParameterObject, Property, PropertyDetails, PropertyType(..), Tool(..)
     )
 
 {-| <https://platform.openai.com/docs/api-reference/chat/create>
@@ -14,29 +15,16 @@ module OpenAI.Chat exposing
 -}
 
 import Dict exposing (Dict)
+import Element.Region exposing (description)
 import Ext.Http
+import Html.Attributes exposing (property)
 import Http
 import Json.Decode
 import Json.Encode
 import OpenAI.Common
 import OpenAI.Internal exposing (andMap)
+import Set exposing (Set)
 import Time
-
-
-{-| -}
-type ModelID
-    = GPT3_5_Turbo
-    | GPT3_5_Turbo_0301
-
-
-stringFromModelID : ModelID -> String
-stringFromModelID modelID =
-    case modelID of
-        GPT3_5_Turbo ->
-            "gpt-3.5-turbo"
-
-        GPT3_5_Turbo_0301 ->
-            "gpt-3.5-turbo-0301"
 
 
 {-| -}
@@ -117,7 +105,7 @@ If `stream` is set to `True`, response will stream back partial progress. If set
 
 -}
 type alias Input =
-    { model : ModelID
+    { model : String
     , messages : List ChatMessage
     , temperature : Maybe Float
     , top_p : Maybe Float
@@ -129,14 +117,52 @@ type alias Input =
     , frequency_penalty : Maybe Float
     , logit_bias : Maybe (Dict String Int)
     , user : Maybe String
+    , tools : List Tool
     }
+
+
+type alias FunctionDef =
+    { name : String
+    , description : String
+    , paramObject : ParameterObject
+    }
+
+
+type alias ParameterObject =
+    { properties : List Property
+    , required : Set String
+    }
+
+
+type alias Property =
+    { name : String
+    , details : PropertyDetails
+    }
+
+
+type alias PropertyDetails =
+    { type_ : PropertyType
+    , description : String
+    }
+
+
+type PropertyType
+    = PString
+    | PInt
+    | PFloat
+    | PBool
+    | PEnum (List String)
+
+
+type Tool
+    = Function FunctionDef
 
 
 encodeInput : Input -> Json.Encode.Value
 encodeInput input =
     Json.Encode.object
         (List.filterMap identity
-            [ Just ( "model", Json.Encode.string (stringFromModelID input.model) )
+            [ Just ( "model", Json.Encode.string input.model )
             , Just ( "messages", Json.Encode.list encodeChatMessage input.messages )
             , Maybe.map (\a -> ( "temperature", Json.Encode.float a )) input.temperature
             , Maybe.map (\a -> ( "top_p", Json.Encode.float a )) input.top_p
@@ -148,8 +174,76 @@ encodeInput input =
             , Maybe.map (\a -> ( "frequency_penalty", Json.Encode.float a )) input.frequency_penalty
             , Maybe.map (\a -> ( "logit_bias", Json.Encode.dict identity Json.Encode.int a )) input.logit_bias
             , Maybe.map (\a -> ( "user", Json.Encode.string a )) input.user
+            , Just ( "tools", Json.Encode.list encodeTool input.tools )
             ]
         )
+
+
+encodeTool : Tool -> Json.Encode.Value
+encodeTool tool =
+    case tool of
+        Function f ->
+            Json.Encode.object
+                [ ( "type", Json.Encode.string "function" )
+                , ( "function", encodeFunctionDef f )
+                ]
+
+
+encodeFunctionDef : FunctionDef -> Json.Encode.Value
+encodeFunctionDef f =
+    Json.Encode.object
+        [ ( "name", Json.Encode.string f.name )
+        , ( "description", Json.Encode.string f.description )
+        , ( "parameters", encodeParamObject f.paramObject )
+        ]
+
+
+
+-- add "type" : "object" and then
+-- "properties" : with the properties encoded here
+
+
+encodeParamObject : ParameterObject -> Json.Encode.Value
+encodeParamObject po =
+    Json.Encode.object
+        [ ( "type", Json.Encode.string "object" )
+        , ( "properties", Json.Encode.list encodeProperty po.properties )
+        , ( "required", Json.Encode.list Json.Encode.string (Set.toList po.required) )
+        ]
+
+
+encodeProperty : Property -> Json.Encode.Value
+encodeProperty p =
+    Json.Encode.object
+        [ ( p.name, encodePropertyDetails p.details )
+        ]
+
+
+encodePropertyDetails : PropertyDetails -> Json.Encode.Value
+encodePropertyDetails pd =
+    Json.Encode.object
+        [ ( "type", encodePropertyType pd.type_ )
+        , ( "description", Json.Encode.string pd.description )
+        ]
+
+
+encodePropertyType : PropertyType -> Json.Encode.Value
+encodePropertyType t =
+    case t of
+        PString ->
+            Json.Encode.string "string"
+
+        PInt ->
+            Json.Encode.string "integer"
+
+        PFloat ->
+            Json.Encode.string "number"
+
+        PBool ->
+            Json.Encode.string "boolean"
+
+        PEnum l ->
+            Json.Encode.list Json.Encode.string l
 
 
 {-| -}
