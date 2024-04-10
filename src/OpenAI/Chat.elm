@@ -1,7 +1,7 @@
 module OpenAI.Chat exposing
     ( create
     , Input, ChatMessage, ChatMessageRole(..), Output, Choice
-    , FunctionDef, ParameterObject, Property, PropertyDetails, PropertyType(..), Tool(..)
+    , FunctionDef, ParameterObject, Property, PropertyDetails, PropertyType(..), Tool(..), addParameter, makeFunction, requireParams
     )
 
 {-| <https://platform.openai.com/docs/api-reference/chat/create>
@@ -158,6 +158,57 @@ type Tool
     = Function FunctionDef
 
 
+
+--builder pattern to make a function
+
+
+makeFunction : String -> String -> Tool
+makeFunction name description =
+    FunctionDef
+        name
+        description
+        (ParameterObject
+            []
+            (Set.fromList [])
+        )
+        |> Function
+
+
+addParameter : String -> PropertyType -> String -> Tool -> Tool
+addParameter name type_ description (Function f) =
+    let
+        newProperty =
+            Property
+                name
+                (PropertyDetails
+                    type_
+                    description
+                )
+
+        newProperties =
+            newProperty :: f.paramObject.properties
+
+        currentParamObject =
+            f.paramObject
+
+        newParamObject =
+            { currentParamObject | properties = newProperties }
+    in
+    { f | paramObject = newParamObject } |> Function
+
+
+requireParams : List String -> Tool -> Tool
+requireParams required (Function f) =
+    let
+        currentParamObject =
+            f.paramObject
+
+        newParamObject =
+            { currentParamObject | required = Set.fromList required }
+    in
+    { f | paramObject = newParamObject } |> Function
+
+
 encodeInput : Input -> Json.Encode.Value
 encodeInput input =
     Json.Encode.object
@@ -207,24 +258,39 @@ encodeParamObject : ParameterObject -> Json.Encode.Value
 encodeParamObject po =
     Json.Encode.object
         [ ( "type", Json.Encode.string "object" )
-        , ( "properties", Json.Encode.list encodeProperty po.properties )
+        , ( "properties", encodeProperties po.properties )
         , ( "required", Json.Encode.list Json.Encode.string (Set.toList po.required) )
         ]
 
 
-encodeProperty : Property -> Json.Encode.Value
-encodeProperty p =
+encodeProperties : List Property -> Json.Encode.Value
+encodeProperties ps =
     Json.Encode.object
-        [ ( p.name, encodePropertyDetails p.details )
-        ]
+        (List.map (\p -> ( p.name, encodePropertyDetails p.details )) ps)
+
+
+
+-- encodeProperty : Property -> Json.Encode.Value
+-- encodeProperty p =
+--     Json.Encode.object
+--         [ ( p.name, encodePropertyDetails p.details )
+--         ]
 
 
 encodePropertyDetails : PropertyDetails -> Json.Encode.Value
 encodePropertyDetails pd =
     Json.Encode.object
-        [ ( "type", encodePropertyType pd.type_ )
-        , ( "description", Json.Encode.string pd.description )
-        ]
+        ([ ( "type", encodePropertyType pd.type_ )
+         , ( "description", Json.Encode.string pd.description )
+         ]
+            ++ (case pd.type_ of
+                    PEnum values ->
+                        [ ( "enum", Json.Encode.list Json.Encode.string values ) ]
+
+                    _ ->
+                        []
+               )
+        )
 
 
 encodePropertyType : PropertyType -> Json.Encode.Value
@@ -242,8 +308,8 @@ encodePropertyType t =
         PBool ->
             Json.Encode.string "boolean"
 
-        PEnum l ->
-            Json.Encode.list Json.Encode.string l
+        PEnum _ ->
+            Json.Encode.string "string"
 
 
 {-| -}
